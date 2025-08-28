@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>条形码标签生成器</title>
+  <!-- Third-party libraries for Excel parsing, barcode generation -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+  <!-- Latest html2canvas and jsPDF for PDF export -->
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <!-- Tailwind CSS for styling -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Custom CSS for a polished look and feel */
+    :root {
+      --primary: #4f46e5;
+      --primary-light: #6366f1;
+      --primary-dark: #4338ca;
+      --secondary: #10b981;
+      --dark: #1e293b;
+      --light: #f8fafc;
+      --gray: #94a3b8;
+      --gray-light: #e2e8f0;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: #f1f5f9;
+      color: var(--dark);
+    }
+
+    /* Glassmorphism effect for cards */
+    .glass-card {
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-radius: 1rem;
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    /* Custom toggle switch styling */
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 50px;
+      height: 24px;
+    }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #ccc;
+      transition: .4s;
+      border-radius: 24px;
+    }
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 18px; width: 18px;
+      left: 3px; bottom: 3px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
+    input:checked + .toggle-slider { background-color: var(--primary); }
+    input:checked + .toggle-slider:before { transform: translateX(26px); }
+
+    /* Custom number input styling */
+    .input-number {
+      -moz-appearance: textfield;
+      width: 100%;
+      padding: 8px 12px;
+      border-radius: 0.5rem;
+      border: 1px solid var(--gray-light);
+      background-color: white;
+      text-align: center;
+      font-size: 14px;
+      transition: all 0.2s ease;
+    }
+    .input-number:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.2);
+    }
+    .input-number::-webkit-inner-spin-button,
+    .input-number::-webkit-outer-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    /* A4 page preview styling */
+    .label-page {
+      width: 210mm;
+      height: 297mm; /* Use fixed height to prevent PDF issues */
+      background-color: white;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+      margin-bottom: 2rem;
+      page-break-after: always;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      grid-template-rows: repeat(5, 1fr);
+      box-sizing: border-box;
+    }
+
+    .label-wrapper {
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      border: 1px solid #e2e8f0;
+      overflow: hidden;
+      break-inside: avoid; /* Hint for printing/PDF generation */
+    }
+
+    /* Tab styling */
+    .tab-btn.active {
+      color: var(--primary);
+      border-bottom: 3px solid var(--primary);
+    }
+
+    /* Animation for elements fading in */
+    .animate-fade-in {
+      animation: fadeIn 0.5s ease-in-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(15px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    /* Custom scrollbar for preview area */
+    #preview-area::-webkit-scrollbar { width: 8px; }
+    #preview-area::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 10px; }
+    #preview-area::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+    #preview-area::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+<script type="importmap">
+{
+  "imports": {
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.15.0",
+    "react/": "https://aistudiocdn.com/react@^19.1.1/",
+    "react": "https://aistudiocdn.com/react@^19.1.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.1.1/",
+    "react-image-crop": "https://aistudiocdn.com/react-image-crop@^11.0.10"
+  }
+}
+</script>
+</head>
+<body class="min-h-screen text-slate-800">
+  <div class="flex h-screen">
+    <!-- Left Sidebar: Control Panel -->
+    <aside class="w-[400px] flex-shrink-0 bg-white/70 backdrop-blur-lg border-r border-slate-200 p-6 overflow-y-auto">
+      <div class="space-y-6">
+        <div class="text-center">
+          <h1 class="text-2xl font-bold text-indigo-600">条形码标签生成器</h1>
+          <p class="text-slate-500 mt-1">作者：周超  |  版本：v3.0</p>
+        </div>
+
+        <!-- Section 1: Data Import -->
+        <div class="glass-card p-5">
+          <h2 class="text-lg font-semibold mb-3 flex items-center">
+            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+            1. 数据导入
+          </h2>
+          <label class="w-full bg-indigo-500 text-white font-medium py-2 px-4 rounded-lg cursor-pointer hover:bg-indigo-600 transition-all flex items-center justify-center">
+            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
+            选择Excel文件
+            <input type="file" id="fileInput" class="hidden" accept=".xlsx,.xls">
+          </label>
+          <div id="fileName" class="text-sm text-slate-500 mt-2 text-center truncate">未选择任何文件</div>
+          <div class="text-xs text-slate-400 mt-2 p-2 bg-slate-50 rounded-md">
+            请确保Excel包含列: <strong>商品名称, 品牌名称, 规格型号, 制造商, EAN/条形码</strong>
+          </div>
+        </div>
+
+        <!-- Tab Navigation for Settings -->
+        <div class="flex border-b border-slate-200 text-sm">
+          <button class="tab-btn flex-1 py-2 font-medium text-slate-600 active" data-tab="layout">页面布局</button>
+          <button class="tab-btn flex-1 py-2 font-medium text-slate-600" data-tab="font">字体设置</button>
+          <button class="tab-btn flex-1 py-2 font-medium text-slate-600" data-tab="barcode">条码设置</button>
+          <button class="tab-btn flex-1 py-2 font-medium text-slate-600" data-tab="style">标签样式</button>
+        </div>
+
+        <!-- Settings Tabs Content -->
+        <div id="settings-tabs-content">
+          <!-- Layout Settings -->
+          <div id="layoutTab" class="space-y-4 tab-content animate-fade-in">
+             <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">上边距 (mm)</label>
+                  <input type="number" id="marginTop" class="input-number" min="0" max="30" value="10">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">下边距 (mm)</label>
+                  <input type="number" id="marginBottom" class="input-number" min="0" max="30" value="10">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">左边距 (mm)</label>
+                  <input type="number" id="marginLeft" class="input-number" min="0" max="30" value="8">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">右边距 (mm)</label>
+                  <input type="number" id="marginRight" class="input-number" min="0" max="30" value="8">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">行间距 (mm)</label>
+                  <input type="number" id="rowSpacing" class="input-number" min="0" max="20" value="4">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">列间距 (mm)</label>
+                  <input type="number" id="colSpacing" class="input-number" min="0" max="20" value="4">
+                </div>
+              </div>
+          </div>
+          <!-- Font Settings -->
+          <div id="fontTab" class="space-y-4 tab-content hidden animate-fade-in">
+             <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">商品名称 (pt)</label>
+                  <input type="number" id="productNameFontSize" class="input-number" min="8" max="30" value="17">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">品牌名称 (pt)</label>
+                  <input type="number" id="brandFontSize" class="input-number" min="8" max="24" value="12">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">规格/厂商 (pt)</label>
+                  <input type="number" id="infoFontSize" class="input-number" min="6" max="20" value="10">
+                </div>
+              </div>
+          </div>
+           <!-- Barcode Settings -->
+          <div id="barcodeTab" class="space-y-4 tab-content hidden animate-fade-in">
+             <div class="grid grid-cols-2 gap-4">
+                 <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">条码宽度</label>
+                  <input type="number" id="barcodeWidth" class="input-number" min="0.5" max="5" step="0.1" value="2">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">条码高度</label>
+                  <input type="number" id="barcodeHeight" class="input-number" min="10" max="100" step="1" value="46">
+                </div>
+              </div>
+              <div class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50">
+                <label class="text-sm font-medium text-slate-700">自动校正EAN校验码</label>
+                <label class="toggle-switch"><input type="checkbox" id="autoCorrectEAN" checked><span class="toggle-slider"></span></label>
+              </div>
+              <div class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50">
+                <label class="text-sm font-medium text-slate-700">显示条码文本</label>
+                <label class="toggle-switch"><input type="checkbox" id="showBarcodeText" checked><span class="toggle-slider"></span></label>
+              </div>
+          </div>
+          <!-- Style Settings -->
+          <div id="styleTab" class="space-y-4 tab-content hidden animate-fade-in">
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">内边距 (mm)</label>
+                  <input type="number" id="innerPadding" class="input-number" min="0" max="10" value="4">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">边框厚度 (px)</label>
+                  <input type="number" id="borderSize" class="input-number" min="0" max="5" value="1">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">标签圆角 (px)</label>
+                  <input type="number" id="borderRadius" class="input-number" min="0" max="20" value="4">
+                </div>
+              </div>
+              <div class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50">
+                <label class="text-sm font-medium text-slate-700">显示分割线</label>
+                <label class="toggle-switch"><input type="checkbox" id="showDivider" checked><span class="toggle-slider"></span></label>
+              </div>
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="pt-4 border-t border-slate-200 space-y-3">
+          <button id="generateBtn" class="w-full text-white font-semibold py-2.5 px-4 rounded-lg transition-all flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-200 hover:shadow-none">
+            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M20 20v-5h-5M4 4l5 5M20 20l-5-5"></path></svg>
+            生成/更新标签
+          </button>
+          <div class="grid grid-cols-2 gap-3">
+            <button id="exportPdfBtn" class="w-full bg-emerald-500 text-white font-semibold py-2.5 px-4 rounded-lg transition-all flex items-center justify-center hover:bg-emerald-600">
+              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+              导出PDF
+            </button>
+            <button id="printBtn" class="w-full bg-sky-500 text-white font-semibold py-2.5 px-4 rounded-lg transition-all flex items-center justify-center hover:bg-sky-600">
+              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+              直接打印
+            </button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Right Main Area: Preview -->
+    <main class="flex-1 p-8 bg-slate-100">
+      <div id="preview-area" class="h-full w-full overflow-y-auto">
+        <div id="previewContainer" class="flex flex-col items-center">
+          <div id="contentPlaceholder" class="flex flex-col items-center justify-center text-center text-slate-500 h-full">
+            <svg class="w-24 h-24 text-indigo-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+            <p class="text-xl mt-4">请从左侧上传Excel文件</p>
+            <p class="text-slate-400 mt-1">上传后，点击“生成”按钮以显示预览</p>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Progress Modal for PDF Export -->
+  <div id="exportProgress" class="fixed inset-0 bg-black/50 flex items-center justify-center hidden z-50">
+    <div class="bg-white p-6 rounded-lg shadow-xl">
+      <h3 class="text-lg font-bold mb-4">导出PDF中...</h3>
+      <div class="w-64 h-2 bg-gray-200 rounded-full">
+        <div id="progressBar" class="h-full bg-indigo-600 rounded-full transition-all duration-300" style="width:0%"></div>
+      </div>
+      <p id="progressText" class="text-center mt-2 text-sm text-gray-600">0%</p>
+    </div>
+  </div>
+
+  <script>
+    // --- STATE MANAGEMENT ---
+    let excelData = [];
+    const labelsPerPage = 10; // 2 columns * 5 rows
+
+    // --- DOM ELEMENT SELECTORS ---
+    const fileInput = document.getElementById('fileInput');
+    const fileNameDisplay = document.getElementById('fileName');
+    const previewContainer = document.getElementById('previewContainer');
+    const contentPlaceholder = document.getElementById('contentPlaceholder');
+    const generateBtn = document.getElementById('generateBtn');
+    const exportPdfBtn = document.getElementById('exportPdfBtn');
+    const printBtn = document.getElementById('printBtn');
+
+    // --- CONFIGURATION ---
+    const allSettingIds = [
+      'marginTop', 'marginBottom', 'marginLeft', 'marginRight',
+      'rowSpacing', 'colSpacing', 'innerPadding',
+      'productNameFontSize', 'brandFontSize', 'infoFontSize',
+      'barcodeWidth', 'barcodeHeight', 'borderSize', 'borderRadius',
+      'autoCorrectEAN', 'showDivider', 'showBarcodeText'
+    ];
+
+    // --- EVENT LISTENERS ---
+    fileInput.addEventListener('change', handleFile);
+    generateBtn.addEventListener('click', () => withButtonFeedback(generateBtn, '生成/更新标签', '生成中...', generateLabels));
+    exportPdfBtn.addEventListener('click', () => withButtonFeedback(exportPdfBtn, '导出PDF', '导出中...', exportPDF));
+    printBtn.addEventListener('click', printLabels);
+
+    // Add event listeners to all settings inputs for real-time updates
+    allSettingIds.forEach(id => {
+      const input = document.getElementById(id);
+      if (input) {
+        // Use 'input' event for immediate feedback
+        input.addEventListener('input', () => {
+          // Only regenerate if there's a preview already visible
+          if (previewContainer.querySelector('.label-page')) {
+            generateLabels();
+          }
+        });
+      }
+    });
+
+    // Tab switching logic
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+        
+        document.querySelectorAll('.tab-content').forEach(tab => tab.classList.add('hidden'));
+        const tabId = this.getAttribute('data-tab') + 'Tab';
+        document.getElementById(tabId).classList.remove('hidden');
+      });
+    });
+
+    // --- CORE FUNCTIONS ---
+
+    /**
+     * Handles the Excel file upload and parsing.
+     * @param {Event} e - The file input change event.
+     */
+    function handleFile(e) {
+      const file = e.target.files[0];
+      if (!file) {
+        fileNameDisplay.textContent = '未选择任何文件';
+        excelData = [];
+        updatePreviewVisibility();
+        return;
+      }
+      
+      const reader = new FileReader();
+      
+      reader.onload = (event) => {
+        try {
+          const data = new Uint8Array(event.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const sheetName = workbook.SheetNames[0];
+          const sheet = workbook.Sheets[sheetName];
+          excelData = XLSX.utils.sheet_to_json(sheet);
+          fileNameDisplay.textContent = `${file.name} (${excelData.length} 条记录)`;
+          // Clear previous preview and show placeholder
+          previewContainer.innerHTML = '';
+          updatePreviewVisibility();
+        } catch (error) {
+          console.error("Error reading Excel file:", error);
+          fileNameDisplay.textContent = '文件读取失败';
+          excelData = [];
+          updatePreviewVisibility();
+        }
+      };
+      
+      reader.readAsArrayBuffer(file);
+    }
+
+    /**
+     * Gathers all settings from the DOM.
+     * @returns {object} An object containing all current settings.
+     */
+    function getSettings() {
+      const settings = {};
+      allSettingIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el.type === 'checkbox') {
+          settings[id] = el.checked;
+        } else {
+          settings[id] = parseFloat(el.value) || 0;
+        }
+      });
+      return settings;
+    }
+
+    /**
+     * Main function to generate and render barcode labels.
+     */
+    function generateLabels() {
+      if (excelData.length === 0) {
+        return;
+      }
+      
+      previewContainer.innerHTML = '';
+      const settings = getSettings();
+      let page;
+
+      excelData.forEach((row, i) => {
+        if (i % labelsPerPage === 0) {
+          page = document.createElement('div');
+          page.className = 'label-page animate-fade-in';
+          page.style.padding = `${settings.marginTop}mm ${settings.marginRight}mm ${settings.marginBottom}mm ${settings.marginLeft}mm`;
+          page.style.gap = `${settings.rowSpacing}mm ${settings.colSpacing}mm`;
+          previewContainer.appendChild(page);
+        }
+
+        const product = row['商品名称'] || 'N/A';
+        const brand = row['品牌名称'] || 'N/A';
+        const spec = row['规格型号'] || 'N/A';
+        const manufacturer = row['制造商'] || 'N/A';
+        let code = String(row['EAN'] || row['条形码'] || '').replace(/\D/g, '');
+
+        if (settings.autoCorrectEAN && code.length === 12) {
+          code += calcCheckDigit(code);
+        }
+        if (code.length !== 13) {
+          code = '0000000000000'; // Default for invalid EAN
+        }
+
+        const labelWrapper = document.createElement('div');
+        labelWrapper.className = 'label-wrapper';
+        labelWrapper.style.borderWidth = `${settings.borderSize}px`;
+        labelWrapper.style.borderRadius = `${settings.borderRadius}px`;
+        labelWrapper.style.padding = `${settings.innerPadding}mm`;
+
+        labelWrapper.innerHTML = `
+          <div class="flex flex-col h-full">
+            <div>
+              <div class="flex justify-between items-start mb-1">
+                <h2 class="font-bold leading-tight" style="font-size: ${settings.productNameFontSize}pt;">${product}</h2>
+                <div class="font-bold whitespace-nowrap pl-2" style="font-size: ${settings.brandFontSize}pt;">品牌：${brand}</div>
+              </div>
+              ${settings.showDivider ? `<div class="border-t border-black my-1"></div>` : ''}
+              <div class="leading-snug" style="font-size: ${settings.infoFontSize}pt;">规格型号：${spec}</div>
+              <div class="leading-snug" style="font-size: ${settings.infoFontSize}pt;">制造商：${manufacturer}</div>
+            </div>
+            <div class="mt-auto text-center">
+              <svg id="barcode${i}" class="block mx-auto"></svg>
+            </div>
+          </div>`;
+        
+        page.appendChild(labelWrapper);
+
+        try {
+          JsBarcode(`#barcode${i}`, code, {
+            format: 'ean13',
+            width: settings.barcodeWidth,
+            height: settings.barcodeHeight,
+            displayValue: settings.showBarcodeText,
+            textMargin: 0,
+            fontSize: settings.infoFontSize,
+            margin: 0,
+          });
+        } catch (e) {
+            console.error(`Failed to generate barcode for value: ${code}`, e);
+        }
+      });
+      updatePreviewVisibility();
+    }
+
+    /**
+     * Exports the generated labels as a PDF file, processing one page at a time to avoid blank pages, improve performance, and enable progress tracking.
+     */
+    async function exportPDF() {
+      const pages = Array.from(previewContainer.querySelectorAll('.label-page'));
+      if (pages.length === 0) {
+        console.log('Please generate labels first.');
+        return Promise.reject('No labels to export');
+      }
+
+      const progressModal = document.getElementById('exportProgress');
+      const progressBar = document.getElementById('progressBar');
+      const progressText = document.getElementById('progressText');
+      progressModal.classList.remove('hidden');
+      progressBar.style.width = '0%';
+      progressText.textContent = '0%';
+
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+      const pageWidth = 210;
+      const pageHeight = 297;
+
+      for (let i = 0; i < pages.length; i++) {
+        const page = pages[i];
+        const clone = page.cloneNode(true);
+
+        // Re-generate barcodes in the clone to ensure they are properly rendered
+        const barcodes = clone.querySelectorAll('svg[id^="barcode"]');
+        barcodes.forEach((svg, index) => {
+          const originalIndex = i * labelsPerPage + index;
+          const row = excelData[originalIndex];
+          if (row) {
+            let code = String(row['EAN'] || row['条形码'] || '').replace(/\D/g, '');
+            const settings = getSettings();
+            if (settings.autoCorrectEAN && code.length === 12) {
+              code += calcCheckDigit(code);
+            }
+            if (code.length !== 13) {
+              code = '0000000000000';
+            }
+            svg.innerHTML = ''; // Clear existing content
+            JsBarcode(svg, code, {
+              format: 'ean13',
+              width: settings.barcodeWidth,
+              height: settings.barcodeHeight,
+              displayValue: settings.showBarcodeText,
+              textMargin: 0,
+              fontSize: settings.infoFontSize,
+              margin: 0,
+            });
+          }
+        });
+
+        const wrapper = document.createElement('div');
+        wrapper.style.position = 'absolute';
+        wrapper.style.left = '-9999px';
+        wrapper.style.width = `${pageWidth}mm`;
+        wrapper.style.height = `${pageHeight}mm`;
+        wrapper.style.backgroundColor = '#ffffff';
+        wrapper.appendChild(clone);
+        document.body.appendChild(wrapper);
+
+        // Add a small delay to ensure DOM rendering
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        const canvas = await html2canvas(wrapper, {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          logging: false,
+          backgroundColor: '#ffffff'
+        });
+
+        const imgData = canvas.toDataURL('image/jpeg', 1.0);
+
+        if (i > 0) pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', 0, 0, pageWidth, pageHeight);
+
+        document.body.removeChild(wrapper);
+
+        // Small delay to prevent browser overload
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        const percent = Math.round((i + 1) / pages.length * 100);
+        progressBar.style.width = `${percent}%`;
+        progressText.textContent = `${percent}%`;
+      }
+
+      pdf.save('barcode-labels.pdf');
+      progressModal.classList.add('hidden');
+
+      return Promise.resolve();
+    }
+
+    /**
+     * Opens the browser's print dialog for the generated labels.
+     */
+    function printLabels() {
+      if (excelData.length === 0) {
+        console.log('Please upload an Excel file and generate labels first.');
+        return;
+      }
+
+      const settings = getSettings();
+      const printWindow = window.open('', '_blank');
+      
+      // Create the HTML content for the new window
+      const printContent = `
+        <!DOCTYPE html>
+        <html lang="zh">
+        <head>
+          <title>打印标签</title>
+          <script src="https://cdn.tailwindcss.com"><\/script>
+          <style>
+            @page { 
+              size: A4; 
+              margin: 0; 
+            }
+            body { 
+              margin: 0; 
+              font-family: 'Inter', sans-serif;
+            }
+            .label-page {
+              width: 210mm;
+              height: 297mm;
+              page-break-after: always;
+              box-sizing: border-box;
+              display: grid;
+              grid-template-columns: repeat(2, 1fr);
+              grid-template-rows: repeat(5, 1fr);
+              padding: ${settings.marginTop}mm ${settings.marginRight}mm ${settings.marginBottom}mm ${settings.marginLeft}mm;
+              gap: ${settings.rowSpacing}mm ${settings.colSpacing}mm;
+            }
+            .label-wrapper {
+              box-sizing: border-box;
+              border: ${settings.borderSize}px solid #000 !important; /* Use important to override Tailwind */
+              border-radius: ${settings.borderRadius}px;
+              padding: ${settings.innerPadding}mm;
+              overflow: hidden;
+              display: flex;
+              flex-direction: column;
+            }
+             .border-t {
+                border-top-width: 1px;
+                border-color: #000;
+             }
+             .label-page {
+               box-shadow: none !important;
+             }
+          </style>
+        </head>
+        <body>
+          ${previewContainer.innerHTML}
+          <script>
+            window.onload = function() {
+              setTimeout(() => {
+                window.print();
+                window.close();
+              }, 750); // Increased timeout for better rendering
+            };
+          <\/script>
+        </body>
+        </html>
+      `;
+      
+      printWindow.document.write(printContent);
+      printWindow.document.close();
+    }
+    
+    // --- UTILITY FUNCTIONS ---
+
+    /**
+     * Shows or hides the placeholder based on whether labels are rendered.
+     */
+    function updatePreviewVisibility() {
+      const hasLabels = previewContainer.querySelector('.label-page');
+      contentPlaceholder.style.display = hasLabels ? 'none' : 'flex';
+    }
+
+    /**
+     * Calculates the EAN-13 check digit.
+     * @param {string} code - A 12-digit string.
+     * @returns {number} The calculated check digit.
+     */
+    function calcCheckDigit(code) {
+      let sum = 0;
+      for (let i = 0; i < 12; i++) {
+        sum += parseInt(code[i]) * (i % 2 === 0 ? 1 : 3);
+      }
+      return (10 - (sum % 10)) % 10;
+    }
+
+    /**
+     * Provides visual feedback on a button during an async operation.
+     * @param {HTMLElement} button - The button element.
+     * @param {string} originalText - The button's original text.
+     * @param {string} loadingText - The text to show while loading.
+     * @param {Function} action - The function to execute.
+     */
+    async function withButtonFeedback(button, originalText, loadingText, action) {
+        const originalContent = button.innerHTML;
+        button.innerHTML = `<svg class="animate-spin h-5 w-5 mr-3" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10" stroke-width="4" stroke-opacity="0.25"></circle><path d="M12 2a10 10 0 0110 10" stroke-width="4"></path></svg> ${loadingText}...`;
+        button.disabled = true;
+        try {
+            await action();
+        } catch (e) {
+            console.error("Action failed:", e);
+        } finally {
+            button.innerHTML = originalContent;
+            button.disabled = false;
+        }
+    }
+  </script>
+</body>
+</html>
